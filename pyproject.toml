@@ -1,0 +1,10 @@
+[project]
+name = "RadixSort"
+version = "0.0.0"
+description = "My study on RadixSort using a compute shader"
+readme = "README.md"
+requires-python = "==3.10.*"
+dependencies = [
+    "numpy",
+    "slangpy==0.36.0"
+]
