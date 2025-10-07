@@ -18,8 +18,9 @@ device = spy.Device(
 program = device.load_program("count.slang", ["compute_main"])
 kernel = device.create_compute_kernel(program)
 
-NUM_KEYS = 1 << 16
+NUM_KEYS = 1 << 20
 MAX_THREAD_GROUPS = 800
+print("Key Count: ", NUM_KEYS)
 
 block_size = ELEMENTS_PER_THREAD * THREADGROUP_SIZE
 num_blocks = (NUM_KEYS + block_size - 1) // block_size
@@ -45,7 +46,16 @@ sum_table_buffer = device.create_buffer(
     usage=spy.BufferUsage.unordered_access,
     data=sum_table
 )
+
+HAS_TIMEQUERY_FEATURE = device.has_feature(spy.Feature.timestamp_query)
+if HAS_TIMEQUERY_FEATURE:
+    query_pool = device.create_query_pool(type=spy.QueryType.timestamp, count=2)
+
 command_encoder = device.create_command_encoder()
+if HAS_TIMEQUERY_FEATURE:
+    command_encoder.write_timestamp(query_pool, 0)
+
+cpu_timer = spy.Timer()
 with command_encoder.begin_compute_pass() as pass_encoder:
     shader_object = pass_encoder.bind_pipeline(kernel.pipeline)
     cursor = spy.ShaderCursor(shader_object)["pass"]
@@ -58,10 +68,20 @@ with command_encoder.begin_compute_pass() as pass_encoder:
 
     cursor["keys"] = keys_buffer
     cursor["sum_table"] = sum_table_buffer
-
     pass_encoder.dispatch_compute([num_threadgroups_to_run, 1, 1])
+if HAS_TIMEQUERY_FEATURE:
+    command_encoder.write_timestamp(query_pool, 1)
 id = device.submit_command_buffer(command_encoder.finish())
-device.wait_for_submit(id)
+device.wait_for_idle()
+
+cpu_time_elapsed = cpu_timer.elapsed_ms()
+print(f"{cpu_time_elapsed} ms elapsed on cpu timer")
+
+if HAS_TIMEQUERY_FEATURE:
+    timers = np.array(query_pool.get_timestamp_results(0, 2))
+    timers /= device.info.timestamp_frequency
+    diff = timers[1] - timers[0]
+    print(f"{diff} seconds elapsed on gpu query")
 
 expected = np.bincount(keys, minlength=SORT_BIN_COUNT)
 result = sum_table_buffer.to_numpy().view(np.uint32)
