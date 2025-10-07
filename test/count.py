@@ -18,7 +18,7 @@ device = spy.Device(
 program = device.load_program("count.slang", ["compute_main"])
 kernel = device.create_compute_kernel(program)
 
-NUM_KEYS = 512
+NUM_KEYS = 1 << 16
 MAX_THREAD_GROUPS = 800
 
 block_size = ELEMENTS_PER_THREAD * THREADGROUP_SIZE
@@ -30,6 +30,7 @@ num_threadgroups_with_additional_blocks = num_blocks % num_threadgroups_to_run
 if num_blocks < num_threadgroups_to_run:
     blocks_per_threadgroup = 1
     num_threadgroups_to_run = num_blocks
+    num_threadgroups_with_additional_blocks = 0
 
 np.random.seed(20251002)
 keys = np.random.randint(0, SORT_BIN_COUNT, size=NUM_KEYS, dtype=np.uint32)
@@ -58,12 +59,14 @@ with command_encoder.begin_compute_pass() as pass_encoder:
     cursor["keys"] = keys_buffer
     cursor["sum_table"] = sum_table_buffer
 
-    pass_encoder.dispatch([num_threadgroups_to_run, 1, 1])
+    pass_encoder.dispatch_compute([num_threadgroups_to_run, 1, 1])
 id = device.submit_command_buffer(command_encoder.finish())
 device.wait_for_submit(id)
 
 expected = np.bincount(keys, minlength=SORT_BIN_COUNT)
 result = sum_table_buffer.to_numpy().view(np.uint32)
+result = result.reshape(-1, num_threadgroups_to_run).sum(axis=1, dtype=np.uint32)
+
 print(result)
 print(expected)
 assert np.array_equal(result, expected)

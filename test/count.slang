@@ -33,18 +33,15 @@ void compute_main(uint3 local_id : SV_GroupThreadID, uint3 group_id : SV_GroupID
     // Wait for everyone to catch up
     GroupMemoryBarrierWithGroupSync();
 
-    // print("{}-{}: {} {} {}\n", group_id.x, local_id.x, pass.config_shift_bit, pass.config_num_keys, pass.config_num_blocks_per_threadgroup);
-
     int block_size = ELEMENTS_PER_THREAD * THREADGROUP_SIZE;
 
     uint threadgroup_block_start = (block_size * pass.config_num_blocks_per_threadgroup * group_id.x);
     uint num_blocks_to_process = pass.config_num_blocks_per_threadgroup;
 
-    uint additional_block_thread_group_id = group_id.x - pass.config_num_thread_groups + pass.config_num_threadgroups_with_additional_block;
-    if (additional_block_thread_group_id >= 0)
+    if (group_id.x >= pass.config_num_thread_groups - pass.config_num_threadgroups_with_additional_block)
     {
         // this thread in this thread group need to process one more block
-        threadgroup_block_start += additional_block_thread_group_id * block_size;
+        threadgroup_block_start += (group_id.x - (pass.config_num_thread_groups - pass.config_num_threadgroups_with_additional_block)) * block_size;
         ++num_blocks_to_process;
     }
 
@@ -68,8 +65,8 @@ void compute_main(uint3 local_id : SV_GroupThreadID, uint3 group_id : SV_GroupID
                 // uint local_key = (src_keys[i] >> sort_config.shift_bit) & 0xF;
                 uint local_key = src_keys[i];
                 // NOTE(@chan): I guess there would be no need for InterlockedAdd here if each thread has BINs??
-                InterlockedAdd(histogram[(local_key * THREADGROUP_SIZE) + local_id.x], 1);
-                // histogram[(local_key * THREADGROUP_SIZE) + local_id.x] += 1;
+                // InterlockedAdd(histogram[(local_key * THREADGROUP_SIZE) + local_id.x], 1);
+                histogram[(local_key * THREADGROUP_SIZE) + local_id.x] += 1;
                 data_index += THREADGROUP_SIZE;
             }
         }
