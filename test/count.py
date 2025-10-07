@@ -15,12 +15,11 @@ device = spy.Device(
     compiler_options={"include_paths": [EXAMPLE_DIR]},
 )
 
-program = device.load_program("count.slang", ["compute_main"])
+program = device.load_program("count.slang", ["count_pass"])
 kernel = device.create_compute_kernel(program)
 
-NUM_KEYS = 1 << 20
+NUM_KEYS = (1 << 20) + 1337
 MAX_THREAD_GROUPS = 800
-print("Key Count: ", NUM_KEYS)
 
 block_size = ELEMENTS_PER_THREAD * THREADGROUP_SIZE
 num_blocks = (NUM_KEYS + block_size - 1) // block_size
@@ -32,6 +31,12 @@ if num_blocks < num_threadgroups_to_run:
     blocks_per_threadgroup = 1
     num_threadgroups_to_run = num_blocks
     num_threadgroups_with_additional_blocks = 0
+
+print("Key Count: ", NUM_KEYS)
+print("Num Blocks: ", num_blocks)
+print("Num ThreadGroups: ", num_threadgroups_to_run)
+print("Num Blocks Per ThreadGroup: ", blocks_per_threadgroup)
+print("Num ThreadGroups with Additional Blocks: ", num_threadgroups_with_additional_blocks)
 
 np.random.seed(20251002)
 keys = np.random.randint(0, SORT_BIN_COUNT, size=NUM_KEYS, dtype=np.uint32)
