@@ -103,9 +103,65 @@ void count_pass(uint3 local_id : SV_GroupThreadID, uint3 group_id : SV_GroupID)
     }
 }
 
+groupshared uint lds_sums[THREADGROUP_SIZE];
 [numthreads(THREADGROUP_SIZE, 1, 1)]
 void count_reduce_pass(uint3 local_id: SV_GroupThreadID, uint3 group_id: SV_GroupID)
 {
+    // NOTE(@chan): each group on this reduce pass on one bin.
+    // To know what bin this group will handle, we get bin_id.
+    // After that, we get exact offset of bin x start by bin_id * num_thread_groups
     uint bin_id = group_id.x / pass.config_num_reduce_threadgroup_per_bin;
     uint bin_offset = bin_id * pass.config_num_thread_groups;
+
+    // NOTE(@chan): Out of reduce threadgroups for bin X,
+    // what is the base index of this group?
+    uint base_index = (group_id.x % pass.config_num_reduce_threadgroup_per_bin) * ELEMENTS_PER_THREAD * THREADGROUP_SIZE;
+
+    uint threadgroup_sum = 0;
+    for (uint i = 0; i < ELEMENTS_PER_THREAD; ++i)
+    {
+        // NOTE(@chan): Out of elements in this reduce threadgroup for bin X,
+        // what this thread handles
+        uint data_index = base_index + (i * THREADGROUP_SIZE) + local_id.x;
+        if (data_index < pass.config_num_thread_groups)
+        {
+            threadgroup_sum += pass.sum_table[bin_offset + data_index];
+        }
+    }
+
+    // Reduce across the entirety of the thread group
+    uint lane_count = WaveGetLaneCount();
+    uint wave_reduced = WaveActiveSum(threadgroup_sum);
+
+    uint wave_id = local_id.x / lane_count;
+    if (WaveIsFirstLane())
+        lds_sums[wave_id] = wave_reduced;
+
+    // NOTE(@chan): let all the threads write lds_sums
+    GroupMemoryBarrierWithGroupSync();
+
+    if (wave_id == 0) // NOTE(@chan): only the first wave gets the threadgroup sums
+    {
+        // NOTE(@chan): As AMD code says, it will not work well when the lane size is less tha or equal to 8,
+        // because the local_id.x (currently here a lane index) cannot handle the other waves.
+        // Let's say we have 128 threadgroup size and 8 lanes, then there would be 32 waves.
+        // the thread id from 0 to 7 is in the first wave and it can see only from 0 to 7 waves, except waves from 8 to 31 waves.
+        // In this we should set a ELEMENTS_PER_LANE (here 4 in this example) and then calculate it.
+        // But I don't know I can do it in wave level or not (I guess in CUDA you can do it.)
+        // If we find a HW with this setup, then we can start to fix this.
+        uint wave_count = THREADGROUP_SIZE / lane_count;
+        wave_reduced = WaveActiveSum(local_id.x < wave_count ? lds_sums[local_id.x] : 0);
+    }
+
+    // NOTE(@chan): as the first wave holds the threadgroup sums, we let the first thread write the sum
+    if (local_id.x == 0)
+        pass.reduce_table[group_id.x] = wave_reduced;
+
+    // NOTE(@chan):
+    // The layout would be still look like this
+    // Bin0 [Group0, Group1, ...]
+    // Bin1 [Group0, Group1, ...]
+    // ...
+    // But if the sum table would have small number of elements,
+    // then this pass output can be a global counting.
 }
