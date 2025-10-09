@@ -1,6 +1,12 @@
 // import sgl.device.print;
 
 // https://github.com/GPUOpen-Effects/FidelityFX-ParallelSort/blob/master/ffx-parallelsort/FFX_ParallelSort.h
+
+#define SORT_BITS_PER_PASS 4
+#define SORT_BIN_COUNT (1 << SORT_BITS_PER_PASS)
+#define ELEMENTS_PER_THREAD 4
+#define THREADGROUP_SIZE 128
+
 struct CountPass
 {
     RWStructuredBuffer<uint> keys;
@@ -16,11 +22,6 @@ struct CountPass
 }
 
 ParameterBlock<CountPass> pass;
-
-#define SORT_BITS_PER_PASS 4
-#define SORT_BIN_COUNT (1 << SORT_BITS_PER_PASS)
-#define ELEMENTS_PER_THREAD 4
-#define THREADGROUP_SIZE 128
 
 // Shared memory: one count table per thread
 groupshared uint histogram[THREADGROUP_SIZE * SORT_BIN_COUNT];
@@ -107,7 +108,7 @@ groupshared uint lds_sums[THREADGROUP_SIZE];
 [numthreads(THREADGROUP_SIZE, 1, 1)]
 void count_reduce_pass(uint3 local_id: SV_GroupThreadID, uint3 group_id: SV_GroupID)
 {
-    // NOTE(@chan): each group on this reduce pass on one bin.
+    // NOTE(@chan): each group on this reduce pass cares one bin.
     // To know what bin this group will handle, we get bin_id.
     // After that, we get exact offset of bin x start by bin_id * num_thread_groups
     uint bin_id = group_id.x / pass.config_num_reduce_threadgroup_per_bin;
