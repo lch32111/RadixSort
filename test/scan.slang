@@ -15,7 +15,7 @@ struct ScanPass
     uint config_num_threadgroups_with_additional_block;
     uint config_num_reduce_threadgroup_per_bin;
     uint config_num_scan_values;
-}
+};
 
 groupshared uint lds_sum[THREADGROUP_SIZE];
 uint block_scan_prefix(uint local_sum, uint local_id)
@@ -29,12 +29,12 @@ uint block_scan_prefix(uint local_sum, uint local_id)
 
     // Last element in a wave writes out partial sum to LDS
     if (lane_id == WaveGetLaneCount() - 1)
-        lds[wave_id] = wave_prefixed + local_sum;
+        lds_sum[wave_id] = wave_prefixed + local_sum;
 
     GroupMemoryBarrierWithGroupSync();
 
     // First wave prefixes partial sums
-    if (!wave_id)
+    if (wave_id == 0)
         lds_sum[local_id] = WavePrefixSum(lds_sum[local_id]);
 
     GroupMemoryBarrierWithGroupSync();

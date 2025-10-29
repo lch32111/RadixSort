@@ -16,7 +16,10 @@ count_reduce_program = device.load_program("count.slang", ["count_reduce_pass"])
 count_pass_kernel = device.create_compute_kernel(count_program)
 count_reduce_pass_kernel = device.create_compute_kernel(count_reduce_program)
 
-NUM_KEYS = (1 << 20) + 1337
+
+# NUM_KEYS = (1 << 25) + 1337
+# NUM_KEYS = 32
+NUM_KEYS = 512 * 512
 
 config = Const.RadixDispatchConfig(NUM_KEYS)
 
@@ -112,15 +115,20 @@ if HAS_TIMEQUERY_FEATURE:
     diff = timers[1] - timers[0]
     print(f"{diff} seconds elapsed on gpu query")
 
+if NUM_KEYS <= 16:
+    print("Keys: ", keys)
+
 expected = np.bincount(keys, minlength=Const.SORT_BIN_COUNT)
 sum_table_result = sum_table_buffer.to_numpy().view(np.uint32)
-sum_table_result = sum_table_result.reshape(-1, config.num_threadgroups_to_run).sum(axis=1, dtype=np.uint32)
+original_sum_table_result = sum_table_result.reshape(-1, config.num_threadgroups_to_run)
+sum_table_result = original_sum_table_result.sum(axis=1, dtype=np.uint32)
 
 print(sum_table_result)
 print(expected)
 assert np.array_equal(sum_table_result, expected)
 
 reduce_table_result = reduce_table_buffer.to_numpy().view(np.uint32)
-reduce_table_result = reduce_table_result.reshape(-1, config.num_reduce_threadgroup_per_bin).sum(axis=1, dtype=np.uint32)
+original_reduce_table_result = reduce_table_result.reshape(-1, config.num_reduce_threadgroup_per_bin)
+reduce_table_result = original_reduce_table_result.sum(axis=1, dtype=np.uint32)
 print(reduce_table_result)
 assert np.array_equal(reduce_table_result, expected)

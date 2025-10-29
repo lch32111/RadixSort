@@ -160,9 +160,10 @@ void count_reduce_pass(uint3 local_id: SV_GroupThreadID, uint3 group_id: SV_Grou
 
     // NOTE(@chan):
     // The layout would be still look like this
-    // Bin0 [Group0, Group1, ...]
-    // Bin1 [Group0, Group1, ...]
+    // Bin0 [Group0, Group1, ..., .. GroupX]
+    // Bin1 [GroupX+1, GroupX+2, ...]
     // ...
+    // The number of groups for each bin is num_reduce_threadgroup_per_bin
     // But if the sum table would have small number of elements,
     // then this pass output can be a global counting.
 }
