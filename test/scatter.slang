@@ -1,3 +1,5 @@
+// import sgl.device.print;
+
 #define SORT_BITS_PER_PASS 4
 #define SORT_BIN_COUNT (1 << SORT_BITS_PER_PASS)
 #define ELEMENTS_PER_THREAD 4
@@ -94,7 +96,6 @@ void scatter_pass(uint3 local_id : SV_GroupThreadID, uint3 group_id : SV_GroupID
     uint block_index = threadgroup_block_start + local_id.x;
 
     // Count value occurences
-    uint new_count;
     for (uint block_count = 0; block_count < num_blocks_to_process; ++block_count, block_index += block_size)
     {
         uint data_index = block_index;
@@ -112,6 +113,7 @@ void scatter_pass(uint3 local_id : SV_GroupThreadID, uint3 group_id : SV_GroupID
 
         src_keys[3] = (data_index < pass.config_num_keys) ? pass.src_buffer[data_index] : 0xFFFFFFFFu;
 
+        data_index = block_index;
         for (int i = 0; i < ELEMENTS_PER_THREAD; ++i)
         {
             // clear the local histogram
@@ -214,8 +216,7 @@ void scatter_pass(uint3 local_id : SV_GroupThreadID, uint3 group_id : SV_GroupID
 
             // Write to detination
             uint total_offset = global_offset + local_offset;
-
-            if (total_offset < pass.config_num_keys)
+            if (data_index < pass.config_num_keys && total_offset < pass.config_num_keys)
             {
                 pass.dst_buffer[total_offset] = local_key;
             }
@@ -225,6 +226,8 @@ void scatter_pass(uint3 local_id : SV_GroupThreadID, uint3 group_id : SV_GroupID
             // Update the cached histogram for the next set of entries
             if (local_id.x < SORT_BIN_COUNT)
                 bin_offset_cache[local_id.x] += local_histogram[local_id.x];
+
+            data_index += THREADGROUP_SIZE;
         }
     }
 }

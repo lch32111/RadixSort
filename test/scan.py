@@ -59,13 +59,14 @@ command_encoder.set_buffer_state(count.sum_table_buffer, spy.ResourceState.unord
 id = count.device.submit_command_buffer(command_encoder.finish())
 count.device.wait_for_idle()
 
-expected_scan_reduce_table = np.concatenate((np.asarray([[0]], dtype=np.uint32), np.cumsum(count.original_reduce_table_result, axis=0, dtype=np.uint32)[:-1]))
+expected_scan_reduce_table = np.concatenate((np.array([0], dtype=np.uint32), np.cumsum(count.original_reduce_table_result.flatten(), axis=0, dtype=np.uint32)[:-1]))
+expected_scan_reduce_table = expected_scan_reduce_table.reshape(count.original_reduce_table_result.shape)
 scan_reduce_table_result = count.reduce_table_buffer.to_numpy().view(np.uint32).reshape(-1, count.config.num_reduce_threadgroup_per_bin)
 print(scan_reduce_table_result)
 assert np.array_equal(scan_reduce_table_result, expected_scan_reduce_table)
 
 expected_scan_sum_table = np.hstack([np.zeros((count.Const.SORT_BIN_COUNT, 1), dtype=np.uint32), np.cumsum(count.original_sum_table_result, axis=1, dtype=np.uint32)[:, :-1]])
-expected_scan_sum_table += expected_scan_reduce_table
+expected_scan_sum_table[:] += expected_scan_reduce_table[:, 0][..., np.newaxis]
 scan_add_sum_table_result = count.sum_table_buffer.to_numpy().view(np.uint32).reshape(count.Const.SORT_BIN_COUNT, -1)
 print(scan_add_sum_table_result)
 assert np.array_equal(scan_add_sum_table_result, expected_scan_sum_table)

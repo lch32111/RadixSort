@@ -33,7 +33,8 @@ with command_encoder.begin_compute_pass() as pass_encoder:
     pass_encoder.dispatch_compute([config.num_threadgroups_to_run, 1, 1])
 
 id = device.submit_command_buffer(command_encoder.finish())
-device.wait_for_idle()
+device.wait_for_idle() 
+device.flush_print()
 
 sorted_keys = np.sort(scan.count.keys)
 out_buffer_result = out_buffer.to_numpy().view(np.uint32)
