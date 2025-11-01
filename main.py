@@ -55,21 +55,37 @@ class RadixSorter:
                 data=np.zeros(self.num_keys, dtype=np.uint32)
             )
            
-           # Only set one validation as true
-           # only validate in the first loop
+           # Only set one validation as true, because it will exit this program.
+            self.DO_VALIDATION_INDEX = 7 # loop index for validation
             self.DO_VALIDATION_COUNTING = False
             self.DO_VALIDATION_SCAN = False
-            self.DO_VALIDATION_SCATTER = False
-            self.DO_VALIDATE_RADIX_SORT = True
+            self.DO_VALIDATION_SCATTER = True
+            self.DO_VALIDATE_RADIX_SORT = False # validate after all the loops
+            
             if self.DO_VALIDATION_SCAN or self.DO_VALIDATION_COUNTING:
                 # only validate the first pass 
                 self.keys_cpu = keys.to_numpy().view(np.uint32)
-                first_4bits = self.keys_cpu & 0xF
+
+                self.keys_temp = self.keys_cpu.copy()
+                for shift_bit in range(0, self.sorter.KEY_BIT, self.sorter.SORT_BIT_PER_PASS):
+                    if shift_bit == self.DO_VALIDATION_INDEX * self.sorter.SORT_BIT_PER_PASS:
+                        break
+
+                    keys_bits = (self.keys_temp >> shift_bit) & 0xF
+                    sort_indices = np.argsort(keys_bits, stable=True)
+                    self.keys_temp = self.keys_temp[sort_indices]
+
+                first_4bits = (self.keys_temp >> shift_bit) & 0xF
 
                 group_results = []
-                for i in range(self.num_threadgroups_to_run):
-                    start_index = i * self.num_blocks_per_threadgroup * self.block_size
-                    end_index = (i + 1) * self.num_blocks_per_threadgroup * self.block_size
+                for group_id in range(self.num_threadgroups_to_run):
+                    start_index = group_id * self.num_blocks_per_threadgroup * self.block_size
+
+                    num_blocks_for_this_group = self.num_blocks_per_threadgroup
+                    if group_id >= self.num_threadgroups_to_run - self.num_threadgroups_with_additional_blocks:
+                        start_index += (group_id - (self.num_threadgroups_to_run - self.num_threadgroups_with_additional_blocks)) * self.block_size
+                        num_blocks_for_this_group += 1
+                    end_index = start_index +  num_blocks_for_this_group * self.block_size
                     if (end_index > self.num_keys):
                         end_index = self.num_keys
 
@@ -111,16 +127,15 @@ class RadixSorter:
                 self.keys_cpu = keys.to_numpy().view(np.uint32)
                 
                 self.keys_temp = self.keys_cpu.copy()
-                self.scatter_validation_index = 7
                 for shift_bit in range(0, self.sorter.KEY_BIT, self.sorter.SORT_BIT_PER_PASS):
                     keys_bits = (self.keys_temp >> shift_bit) & 0xF
                     sort_indices = np.argsort(keys_bits, stable=True)
                     self.keys_temp = self.keys_temp[sort_indices]
 
-                    if shift_bit == self.scatter_validation_index * self.sorter.SORT_BIT_PER_PASS:
+                    if shift_bit == self.DO_VALIDATION_INDEX * self.sorter.SORT_BIT_PER_PASS:
                         break
 
-                self.expected_first_sorted_result = self.keys_temp
+                self.expected_scatter_sorted_result = self.keys_temp
 
             if self.DO_VALIDATE_RADIX_SORT:
                 self.keys_cpu = keys.to_numpy().view(np.uint32)
@@ -175,7 +190,8 @@ class RadixSorter:
                 count_reduce_pass_cursor["config"] = config_data
                 pass_encoder.dispatch_compute([self.num_reduce_threadgroups_to_run, 1, 1])
 
-                if self.DO_VALIDATION_COUNTING:
+                if self.DO_VALIDATION_COUNTING and\
+                   self.DO_VALIDATION_INDEX * self.sorter.SORT_BIT_PER_PASS == shift_bit:
                     pass_encoder.end()
                     device = self.sorter.device
                     device.submit_command_buffer(command_encoder.finish())
@@ -209,7 +225,8 @@ class RadixSorter:
                 scan_add_pass_cursor["config"] = config_data
                 pass_encoder.dispatch_compute([self.num_reduce_threadgroups_to_run, 1, 1])
 
-                if self.DO_VALIDATION_SCAN:
+                if self.DO_VALIDATION_SCAN and\
+                   self.DO_VALIDATION_INDEX * self.sorter.SORT_BIT_PER_PASS == shift_bit:
                     pass_encoder.end()
                     device = self.sorter.device
                     device.submit_command_buffer(command_encoder.finish())
@@ -233,14 +250,14 @@ class RadixSorter:
                 pass_encoder.dispatch_compute([self.num_threadgroups_to_run, 1, 1])
 
                 if self.DO_VALIDATION_SCATTER and\
-                   self.scatter_validation_index * self.sorter.SORT_BIT_PER_PASS == shift_bit:
+                   self.DO_VALIDATION_INDEX * self.sorter.SORT_BIT_PER_PASS == shift_bit:
                     pass_encoder.end()
                     device = self.sorter.device
                     device.submit_command_buffer(command_encoder.finish())
                     device.wait_for_idle()
 
-                    first_sorted_result = key_buffers[dst_key_index].to_numpy().view(np.uint32)
-                    assert np.array_equal(self.expected_first_sorted_result, first_sorted_result)
+                    sorted_result = key_buffers[dst_key_index].to_numpy().view(np.uint32)
+                    assert np.array_equal(self.expected_scatter_sorted_result, sorted_result)
                     exit(0)
 
                 temp_key_index = src_key_index
