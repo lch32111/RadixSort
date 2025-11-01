@@ -414,7 +414,7 @@ void scatter_pass(uint local_id: SV_GroupThreadID, uint group_id: SV_GroupID)
                 // NOTE(@chan):
                 // Right after block_scan_prefix, local_sum has
                 // 0xprefix_bin3 | prefix_bin2 | prefix_bin1 | prefix_bin0
-                uint local_sum = block_scan_prefix(packed_histogram, local_id.x);
+                uint local_sum = block_scan_prefix(packed_histogram, local_id);
 
                 // Last thread stores the updated histogram counts for the thread group
                 // Scratch = 0xsum3|sum2|sum1|sum0 for thread group

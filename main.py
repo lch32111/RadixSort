@@ -63,10 +63,6 @@ class RadixSorter:
                 usage=spy.BufferUsage.shader_resource | spy.BufferUsage.unordered_access,
                 data=np.zeros(self.sorter.SORT_BIN_COUNT * self.num_reduce_threadgroup_per_bin, dtype=np.uint32)
             )
-            self.sorted_buffer = device.create_buffer(
-                usage=spy.BufferUsage.shader_resource | spy.BufferUsage.unordered_access,
-                data=np.zeros(self.num_keys, dtype=np.uint32)
-            )
            
             # Only set one validation as true, because it will exit this program.
             # I only validate keys, not payloads.
@@ -89,7 +85,7 @@ class RadixSorter:
                     sort_indices = np.argsort(keys_bits, stable=True)
                     self.keys_temp = self.keys_temp[sort_indices]
 
-                first_4bits = (self.keys_temp >> shift_bit) & 0xF
+                keys_bits = (self.keys_temp >> shift_bit) & 0xF
 
                 group_results = []
                 for group_id in range(self.num_threadgroups_to_run):
@@ -103,7 +99,7 @@ class RadixSorter:
                     if (end_index > self.num_keys):
                         end_index = self.num_keys
 
-                    group_bins = np.bincount(first_4bits[start_index:end_index], minlength=self.sorter.SORT_BIN_COUNT).astype(np.uint32)
+                    group_bins = np.bincount(keys_bits[start_index:end_index], minlength=self.sorter.SORT_BIN_COUNT).astype(np.uint32)
                     group_results.append(group_bins)
 
                 self.expected_sum_table = np.stack(group_results, axis=1)
@@ -182,7 +178,7 @@ class RadixSorter:
                 # config data update
                 config_data["shift_bit"] = shift_bit
                 
-                count_pass_shader_object = pass_encoder.bind_pipeline(self.sorter.count_pass_kernel.pipeline)
+                count_pass_shader_object = pass_encoder.bind_pipeline(self.sorter.count_pass_pipeline)
                 count_pass_cursor = spy.ShaderCursor(count_pass_shader_object)["g_sort"]
                 count_pass_cursor["src_data"] = key_buffers[src_key_index]
                 count_pass_cursor["dst_data"] = key_buffers[dst_key_index]
@@ -196,7 +192,7 @@ class RadixSorter:
 
                 # command_encoder.set_buffer_state(self.sum_table_buffer, spy.ResourceState.shader_resource)
 
-                count_reduce_pass_shader_object = pass_encoder.bind_pipeline(self.sorter.count_reduce_pass_kernel.pipeline)
+                count_reduce_pass_shader_object = pass_encoder.bind_pipeline(self.sorter.count_reduce_pass_pipeline)
                 count_reduce_pass_cursor = spy.ShaderCursor(count_reduce_pass_shader_object)["g_sort"]
                 count_reduce_pass_cursor["src_data"] = key_buffers[src_key_index]
                 count_reduce_pass_cursor["dst_data"] = key_buffers[dst_key_index]
@@ -224,7 +220,7 @@ class RadixSorter:
                     assert np.array_equal(self.expected_sum_reduce_table, reduce_table_result)
                     exit(0)
 
-                scan_pass_shader_object = pass_encoder.bind_pipeline(self.sorter.scan_pass_kernel.pipeline)
+                scan_pass_shader_object = pass_encoder.bind_pipeline(self.sorter.scan_pass_pipeline)
                 scan_pass_cursor = spy.ShaderCursor(scan_pass_shader_object)["g_sort"]
                 scan_pass_cursor["src_data"] = key_buffers[src_key_index]
                 scan_pass_cursor["dst_data"] = key_buffers[dst_key_index]
@@ -237,7 +233,7 @@ class RadixSorter:
                 pass_encoder.dispatch_compute([1, 1, 1])
 
                 # command_encoder.set_buffer_state(count.reduce_table_buffer, spy.ResourceState.shader_resource)
-                scan_add_pass_shader_object = pass_encoder.bind_pipeline(self.sorter.scan_add_pass_kernel.pipeline)
+                scan_add_pass_shader_object = pass_encoder.bind_pipeline(self.sorter.scan_add_pass_pipeline)
                 scan_add_pass_cursor = spy.ShaderCursor(scan_add_pass_shader_object)["g_sort"]
                 scan_add_pass_cursor["src_data"] = key_buffers[src_key_index]
                 scan_add_pass_cursor["dst_data"] = key_buffers[dst_key_index]
@@ -264,7 +260,7 @@ class RadixSorter:
                     assert np.array_equal(self.expected_scan_add_sum_table, scan_add_sum_table_result)
                     exit(0)
                 
-                scatter_pass_shader_object = pass_encoder.bind_pipeline(self.sorter.scatter_pass_kernel.pipeline)
+                scatter_pass_shader_object = pass_encoder.bind_pipeline(self.sorter.scatter_pass_pipeline)
                 scatter_pass_cursor = spy.ShaderCursor(scatter_pass_shader_object)["g_sort"]
                 scatter_pass_cursor["src_data"] = key_buffers[src_key_index]
                 scatter_pass_cursor["dst_data"] = key_buffers[dst_key_index]
@@ -320,20 +316,21 @@ class RadixSorter:
         self.THREADGROUP_SIZE = 128 # need to be tuned according to the device capability
         self.MAX_THREAD_GROUPS = 800 # need to be tuned according to the device capability
 
-        self.count_pass_kernel = device.create_compute_kernel(
-            device.load_program("radix.slang", ["count_pass"])
+        radix_sort_module = device.load_module("radix.slang")
+        self.count_pass_pipeline = device.create_compute_pipeline(
+            device.link_program([radix_sort_module], [radix_sort_module.entry_point("count_pass")])
         )
-        self.count_reduce_pass_kernel = device.create_compute_kernel(
-            device.load_program("radix.slang", ["count_reduce_pass"])
+        self.count_reduce_pass_pipeline = device.create_compute_pipeline(
+            device.link_program([radix_sort_module], [radix_sort_module.entry_point("count_reduce_pass")])
         )
-        self.scan_pass_kernel = device.create_compute_kernel(
-            device.load_program("radix.slang", ["scan_pass"])
+        self.scan_pass_pipeline = device.create_compute_pipeline(
+            device.link_program([radix_sort_module], [radix_sort_module.entry_point("scan_pass")])
         )
-        self.scan_add_pass_kernel = device.create_compute_kernel(
-            device.load_program("radix.slang", ["scan_add_pass"])
+        self.scan_add_pass_pipeline = device.create_compute_pipeline(
+            device.link_program([radix_sort_module], [radix_sort_module.entry_point("scan_add_pass")])
         )
-        self.scatter_pass_kernel = device.create_compute_kernel(
-            device.load_program("radix.slang", ["scatter_pass"])
+        self.scatter_pass_pipeline = device.create_compute_pipeline(
+            device.link_program([radix_sort_module], [radix_sort_module.entry_point("scatter_pass")])
         )
 
         self.requested_sorts = {}
