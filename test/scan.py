@@ -34,10 +34,9 @@ with command_encoder.begin_compute_pass() as pass_encoder:
     cursor["scan_scratch"] = count.reduce_table_buffer # just put it for generating a bind descriptor
     pass_encoder.dispatch_compute([1, 1, 1])
 
+    # NOTE(@chan): slangpy might track its resource usage for automatic barriers
+    # command_encoder.set_buffer_state(count.reduce_table_buffer, spy.ResourceState.shader_resource)
 
-command_encoder.set_buffer_state(count.reduce_table_buffer, spy.ResourceState.unordered_access)
-
-with command_encoder.begin_compute_pass() as pass_encoder:
     shader_object = pass_encoder.bind_pipeline(scan_add_pass_kernel.pipeline)
     cursor = spy.ShaderCursor(shader_object)["pass"]
 
@@ -53,8 +52,6 @@ with command_encoder.begin_compute_pass() as pass_encoder:
     cursor["scan_dst"] = count.sum_table_buffer
     cursor["scan_scratch"] = count.reduce_table_buffer
     pass_encoder.dispatch_compute([count.config.num_reduce_threadgroups_to_run, 1, 1])
-
-command_encoder.set_buffer_state(count.sum_table_buffer, spy.ResourceState.unordered_access)
 
 id = count.device.submit_command_buffer(command_encoder.finish())
 count.device.wait_for_idle()

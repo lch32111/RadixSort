@@ -95,7 +95,6 @@ void scatter_pass(uint3 local_id : SV_GroupThreadID, uint3 group_id : SV_GroupID
     // Get the block start index for this thread
     uint block_index = threadgroup_block_start + local_id.x;
 
-    // Count value occurences
     for (uint block_count = 0; block_count < num_blocks_to_process; ++block_count, block_index += block_size)
     {
         uint data_index = block_index;

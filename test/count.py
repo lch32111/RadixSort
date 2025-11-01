@@ -20,6 +20,7 @@ count_reduce_pass_kernel = device.create_compute_kernel(count_reduce_program)
 NUM_KEYS = (1 << 25) + 1337
 # NUM_KEYS = 32
 # NUM_KEYS = 512 * 512
+NUM_KEYS = 1024
 
 config = Const.RadixDispatchConfig(NUM_KEYS)
 
@@ -37,17 +38,20 @@ sum_table = np.zeros(Const.SORT_BIN_COUNT * config.num_threadgroups_to_run, dtyp
 reduce_table = np.zeros(Const.SORT_BIN_COUNT * config.num_reduce_threadgroup_per_bin, dtype=np.uint32)
 
 keys_buffer = device.create_buffer(
-    usage=spy.BufferUsage.unordered_access,
-    data=keys
+    usage=spy.BufferUsage.shader_resource | spy.BufferUsage.unordered_access,
+    data=keys,
+    label="keys_buffer"
 )
 
 sum_table_buffer = device.create_buffer(
-    usage=spy.BufferUsage.unordered_access,
-    data=sum_table
+    usage=spy.BufferUsage.shader_resource |spy.BufferUsage.unordered_access,
+    data=sum_table,
+    label="sum_table_buffer"
 )
 reduce_table_buffer = device.create_buffer(
-    usage=spy.BufferUsage.unordered_access,
-    data=reduce_table
+    usage=spy.BufferUsage.shader_resource |spy.BufferUsage.unordered_access,
+    data=reduce_table,
+    label="reduce_table_buffer"
 )
 
 HAS_TIMEQUERY_FEATURE = device.has_feature(spy.Feature.timestamp_query)
@@ -60,9 +64,6 @@ if HAS_TIMEQUERY_FEATURE:
 
 cpu_timer = spy.Timer()
 
-command_encoder.set_buffer_state(keys_buffer, spy.ResourceState.shader_resource)
-command_encoder.set_buffer_state(sum_table_buffer, spy.ResourceState.unordered_access)
-command_encoder.set_buffer_state(reduce_table_buffer, spy.ResourceState.unordered_access)
 with command_encoder.begin_compute_pass() as pass_encoder:
     shader_object = pass_encoder.bind_pipeline(count_pass_kernel.pipeline)
     cursor = spy.ShaderCursor(shader_object)["pass"]
@@ -80,11 +81,9 @@ with command_encoder.begin_compute_pass() as pass_encoder:
     cursor["reduce_table"] = reduce_table_buffer
     pass_encoder.dispatch_compute([config.num_threadgroups_to_run, 1, 1])
 
-# barrier on the sum table
-command_encoder.set_buffer_state(sum_table_buffer, spy.ResourceState.shader_resource)
-command_encoder.set_buffer_state(reduce_table_buffer, spy.ResourceState.unordered_access)
+    # NOTE(@chan): slangpy might track its resource usage for automatic barriers
+    # command_encoder.set_buffer_state(count.sum_table_buffer, spy.ResourceState.shader_resource)
 
-with command_encoder.begin_compute_pass() as pass_encoder:
     shader_object = pass_encoder.bind_pipeline(count_reduce_pass_kernel.pipeline)
     cursor = spy.ShaderCursor(shader_object)["pass"]
 
