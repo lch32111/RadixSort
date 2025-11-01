@@ -382,7 +382,7 @@ if __name__ == "__main__":
 
     TEST_COUNT = 10
     # NUM_KEYS = 32
-    # NUM_KEYS = 1024
+    # NUM_KEYS = 1024 + 317
     NUM_KEYS = 512 * 512
     # NUM_KEYS = (1 << 25) + 1337
 
