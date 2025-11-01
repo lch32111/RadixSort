@@ -1,5 +1,3 @@
-// import sgl.device.print;
-
 #define SORT_BITS_PER_PASS 4u
 #define SORT_BIN_COUNT (1u << SORT_BITS_PER_PASS)
 #define ELEMENTS_PER_THREAD 4u
@@ -23,6 +21,11 @@ struct RadixSort
 
     RWStructuredBuffer<uint> sum_table;
     RWStructuredBuffer<uint> sum_reduce_table;
+
+#ifdef RADIXSORT_PAYLOAD
+    RWStructuredBuffer<uint> src_payload;
+    RWStructuredBuffer<uint> dst_payload;
+#endif
 
     ConstantBuffer<RadixSortConfig> config;
 };
@@ -302,7 +305,7 @@ void scan_add_pass(uint local_id: SV_GroupThreadID, uint group_id: SV_GroupID)
 }
 
 [numthreads(THREADGROUP_SIZE, 1, 1)]
-void scatter_pass(uint local_id : SV_GroupThreadID, uint group_id : SV_GroupID)
+void scatter_pass(uint local_id: SV_GroupThreadID, uint group_id: SV_GroupID)
 {
     // Load the sort bin threadgroup offsets into LDS for faster referencing
     if (local_id < SORT_BIN_COUNT)
@@ -359,6 +362,21 @@ void scatter_pass(uint local_id : SV_GroupThreadID, uint group_id : SV_GroupID)
 
         src_keys[3] = (data_index < g_sort.config.num_keys) ? g_sort.src_data[data_index] : 0xFFFFFFFFu;
 
+#ifdef RADIXSORT_PAYLOAD
+        data_index = block_index;
+
+        uint src_values[ELEMENTS_PER_THREAD];
+        src_values[0] = (data_index < g_sort.config.num_keys) ? g_sort.src_payload[data_index] : 0u;
+        data_index += THREADGROUP_SIZE;
+
+        src_values[1] = (data_index < g_sort.config.num_keys) ? g_sort.src_payload[data_index] : 0u;
+        data_index += THREADGROUP_SIZE;
+
+        src_values[2] = (data_index < g_sort.config.num_keys) ? g_sort.src_payload[data_index] : 0u;
+        data_index += THREADGROUP_SIZE;
+
+        src_values[3] = (data_index < g_sort.config.num_keys) ? g_sort.src_payload[data_index] : 0u;
+#endif
         data_index = block_index;
         for (uint i = 0; i < ELEMENTS_PER_THREAD; ++i)
         {
@@ -367,6 +385,9 @@ void scatter_pass(uint local_id : SV_GroupThreadID, uint group_id : SV_GroupID)
                 lds_bin_local_histogram[local_id] = 0;
 
             uint local_key = src_keys[i];
+#ifdef RADIXSORT_PAYLOAD
+            uint local_value = src_values[i];
+#endif
 
             // Sort the keys locally in LDS
             for (uint bit_shift = 0; bit_shift < SORT_BITS_PER_PASS; bit_shift += 2)
@@ -432,6 +453,14 @@ void scatter_pass(uint local_id : SV_GroupThreadID, uint group_id : SV_GroupID)
                 local_key = lds_sum[local_id];
 
                 GroupMemoryBarrierWithGroupSync();
+
+#ifdef RADIXSORT_PAYLOAD
+                lds_sum[key_offset] = local_value;
+                GroupMemoryBarrierWithGroupSync();
+                local_value = lds_sum[local_id];
+
+                GroupMemoryBarrierWithGroupSync();
+#endif
             }
 
             // Need to recalculate the key_index on this thread now that values have been copied around the thread group
@@ -463,6 +492,9 @@ void scatter_pass(uint local_id : SV_GroupThreadID, uint group_id : SV_GroupID)
             if (data_index < g_sort.config.num_keys && total_offset < g_sort.config.num_keys)
             {
                 g_sort.dst_data[total_offset] = local_key;
+#ifdef RADIXSORT_PAYLOAD
+                g_sort.dst_payload[total_offset] = local_value;
+#endif
             }
 
             GroupMemoryBarrierWithGroupSync();

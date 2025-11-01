@@ -7,10 +7,12 @@ HERE_DIR = Path(__file__).parent
 # Assume RadixSorter is used in a frame of rendering to sort multiple key buffers
 class RadixSorter:
     class RadixSortTask:
-        def __init__(self, radix_sorter, keys: spy.Buffer): 
+        def __init__(self, radix_sorter, keys: np.ndarray, payloads: np.ndarray):
+            assert keys.dtype == np.uint32 and payloads.dtype == np.uint32
+
             self.sorter = radix_sorter
 
-            self.num_keys = keys.size // 4
+            self.num_keys = keys.nbytes // 4
 
             self.block_size = self.sorter.ELEMENTS_PER_THREAD * self.sorter.THREADGROUP_SIZE
             self.num_blocks = (self.num_keys + self.block_size - 1) // self.block_size
@@ -34,14 +36,25 @@ class RadixSorter:
 
             device = self.sorter.device
             self.requested_key = keys
+            
             self.keys_buffer1 = device.create_buffer(
                 usage=spy.BufferUsage.shader_resource | spy.BufferUsage.unordered_access,
-                data=np.zeros(self.num_keys, dtype=np.uint32)
+                data=keys
             )
             self.keys_buffer2 = device.create_buffer(
                 usage=spy.BufferUsage.shader_resource | spy.BufferUsage.unordered_access,
                 data=np.zeros(self.num_keys, dtype=np.uint32)
             )
+            if self.sorter.is_sort_with_payload:
+                self.requested_payload = payloads
+                self.payloads_buffer1 = device.create_buffer(
+                    usage=spy.BufferUsage.shader_resource | spy.BufferUsage.unordered_access,
+                    data=payloads
+                )
+                self.payloads_buffer2 = device.create_buffer(
+                    usage=spy.BufferUsage.shader_resource | spy.BufferUsage.unordered_access,
+                    data=np.zeros(self.num_keys, dtype=np.uint32)
+                )
             self.sum_table_buffer = device.create_buffer(
                 usage=spy.BufferUsage.shader_resource | spy.BufferUsage.unordered_access,
                 data=np.zeros(self.sorter.SORT_BIN_COUNT * self.num_threadgroups_to_run, dtype=np.uint32)
@@ -55,11 +68,12 @@ class RadixSorter:
                 data=np.zeros(self.num_keys, dtype=np.uint32)
             )
            
-           # Only set one validation as true, because it will exit this program.
+            # Only set one validation as true, because it will exit this program.
+            # I only validate keys, not payloads.
             self.DO_VALIDATION_INDEX = 7 # loop index for validation
             self.DO_VALIDATION_COUNTING = False
             self.DO_VALIDATION_SCAN = False
-            self.DO_VALIDATION_SCATTER = True
+            self.DO_VALIDATION_SCATTER = False
             self.DO_VALIDATE_RADIX_SORT = False # validate after all the loops
             
             if self.DO_VALIDATION_SCAN or self.DO_VALIDATION_COUNTING:
@@ -144,16 +158,14 @@ class RadixSorter:
 
         def execute(self, command_encoder: spy.CommandEncoder):
             key_buffers = [self.keys_buffer1, self.keys_buffer2]
+            if self.sorter.is_sort_with_payload:
+                payload_buffers = [self.payloads_buffer1, self.payloads_buffer2]
+            
             src_key_index = 0
             dst_key_index = 1
 
             # NOTE(@chan): I comment out barrier codes that I guess slangpy manages barrier automatically.
             # But I want to keep the codes in the case of porting this code into a native graphics API.
-
-            # copy reqeusted_key to our keys_buffer
-            # command_encoder.set_buffer_state(self.keys_buffer1, spy.ResourceState.copy_destination)
-            command_encoder.copy_buffer(self.keys_buffer1, 0, self.requested_key, 0, self.requested_key.size)
-            # command_encoder.set_buffer_state(self.keys_buffer1, spy.ResourceState.unordered_access)
 
             config_data = {
                 "num_keys": self.num_keys,
@@ -176,6 +188,9 @@ class RadixSorter:
                 count_pass_cursor["dst_data"] = key_buffers[dst_key_index]
                 count_pass_cursor["sum_table"] = self.sum_table_buffer
                 count_pass_cursor["sum_reduce_table"] = self.sum_reduce_table_buffer
+                if self.sorter.is_sort_with_payload:
+                    count_pass_cursor["src_payload"] = payload_buffers[src_key_index]
+                    count_pass_cursor["dst_payload"] = payload_buffers[dst_key_index]
                 count_pass_cursor["config"] = config_data
                 pass_encoder.dispatch_compute([self.num_threadgroups_to_run, 1, 1])
 
@@ -187,6 +202,9 @@ class RadixSorter:
                 count_reduce_pass_cursor["dst_data"] = key_buffers[dst_key_index]
                 count_reduce_pass_cursor["sum_table"] = self.sum_table_buffer
                 count_reduce_pass_cursor["sum_reduce_table"] = self.sum_reduce_table_buffer
+                if self.sorter.is_sort_with_payload:
+                    count_reduce_pass_cursor["src_payload"] = payload_buffers[src_key_index]
+                    count_reduce_pass_cursor["dst_payload"] = payload_buffers[dst_key_index]
                 count_reduce_pass_cursor["config"] = config_data
                 pass_encoder.dispatch_compute([self.num_reduce_threadgroups_to_run, 1, 1])
 
@@ -212,6 +230,9 @@ class RadixSorter:
                 scan_pass_cursor["dst_data"] = key_buffers[dst_key_index]
                 scan_pass_cursor["sum_table"] = self.sum_table_buffer
                 scan_pass_cursor["sum_reduce_table"] = self.sum_reduce_table_buffer
+                if self.sorter.is_sort_with_payload:
+                    scan_pass_cursor["src_payload"] = payload_buffers[src_key_index]
+                    scan_pass_cursor["dst_payload"] = payload_buffers[dst_key_index]
                 scan_pass_cursor["config"] = config_data
                 pass_encoder.dispatch_compute([1, 1, 1])
 
@@ -222,6 +243,9 @@ class RadixSorter:
                 scan_add_pass_cursor["dst_data"] = key_buffers[dst_key_index]
                 scan_add_pass_cursor["sum_table"] = self.sum_table_buffer
                 scan_add_pass_cursor["sum_reduce_table"] = self.sum_reduce_table_buffer
+                if self.sorter.is_sort_with_payload:
+                    scan_add_pass_cursor["src_payload"] = payload_buffers[src_key_index]
+                    scan_add_pass_cursor["dst_payload"] = payload_buffers[dst_key_index]
                 scan_add_pass_cursor["config"] = config_data
                 pass_encoder.dispatch_compute([self.num_reduce_threadgroups_to_run, 1, 1])
 
@@ -246,6 +270,9 @@ class RadixSorter:
                 scatter_pass_cursor["dst_data"] = key_buffers[dst_key_index]
                 scatter_pass_cursor["sum_table"] = self.sum_table_buffer
                 scatter_pass_cursor["sum_reduce_table"] = self.sum_reduce_table_buffer
+                if self.sorter.is_sort_with_payload:
+                    scatter_pass_cursor["src_payload"] = payload_buffers[src_key_index]
+                    scatter_pass_cursor["dst_payload"] = payload_buffers[dst_key_index]
                 scatter_pass_cursor["config"] = config_data
                 pass_encoder.dispatch_compute([self.num_threadgroups_to_run, 1, 1])
 
@@ -276,13 +303,15 @@ class RadixSorter:
                 assert np.array_equal(self.expected_sorted_result, sorted_result)
                 exit(0)
 
-                
-
-        def get_result_buffer(self):
-            return 0
+        def get_result_buffers(self):
+            result = [self.keys_buffer1]
+            if self.sorter.is_sort_with_payload:
+                result.append(self.payloads_buffer1)
+            return result
         
-    def __init__(self, device : spy.Device):
+    def __init__(self, device : spy.Device, is_sort_with_payload: bool):
         self.device = device
+        self.is_sort_with_payload = is_sort_with_payload
 
         self.KEY_BIT = 32 # uint32
         self.SORT_BIT_PER_PASS = 4
@@ -318,8 +347,8 @@ class RadixSorter:
     # call for all requests of sort_keys...
     def end_frame(self, command_encoder: spy.CommandEncoder):
         result_buffer_dict = {}
-        for key, sort_task in self.request_sort_keys.items():
-            result_buffer_dict[key] = sort_task.get_result_buffer()
+        for key, sort_task in self.requested_sorts.items():
+            result_buffer_dict[key] = sort_task.get_result_buffers()
 
         del self.requested_sorts
         self.request_sort = { }
@@ -327,43 +356,74 @@ class RadixSorter:
         return result_buffer_dict
 
     # RadixSorter currently supports uint32_t type for keys. (it could be float later)
-    def request_sort_keys(self, label, keys : spy.Buffer):
-        self.requested_sorts[label] = RadixSorter.RadixSortTask(self, keys)
+    def request_sort_keys(self, label, keys : np.ndarray, payloads : np.ndarray):
+        self.requested_sorts[label] = RadixSorter.RadixSortTask(self, keys, payloads)
 
 
 if __name__ == "__main__":
     np.random.seed(20251101)
     # np.random.seed(20251002)
 
+    DO_SORT_WITH_PAYLOAD = True,
+    RADIXSORT_PAYLOAD_MACRO = "RADIXSORT_PAYLOAD" if DO_SORT_WITH_PAYLOAD else ""
     device = spy.Device(
         enable_debug_layers=True,
         # enable_print=True,
-        compiler_options={"include_paths": [HERE_DIR]},
+        compiler_options={
+            "include_paths": [HERE_DIR],
+            "defines" : {
+                RADIXSORT_PAYLOAD_MACRO : "1"
+            }
+        },
     )
+    command_encoder = device.create_command_encoder()
 
-    sorter = RadixSorter(device)
-    print(sorter)
+    sorter = RadixSorter(device, DO_SORT_WITH_PAYLOAD)
 
+    TEST_COUNT = 10
     # NUM_KEYS = 32
     # NUM_KEYS = 1024
-    # NUM_KEYS = 512 * 512
-    NUM_KEYS = (1 << 25) + 1337
-    keys = np.random.randint(0, 0xFFFFFFFF, size=NUM_KEYS, dtype=np.uint32)
+    NUM_KEYS = 512 * 512
+    # NUM_KEYS = (1 << 25) + 1337
 
-    keys_buffer = device.create_buffer(
-        size=keys.nbytes,
-        usage=spy.BufferUsage.unordered_access,
-        data=keys
-    )
+    answer_dict = {}
+    for test_i in range(TEST_COUNT):
+        keys = np.random.randint(0, 0xFFFFFFFF, size=NUM_KEYS, dtype=np.uint32)
 
-    sorter.request_sort_keys("test", keys_buffer)
+        if DO_SORT_WITH_PAYLOAD:
+            payloads = np.random.randint(0, 0xFFFFFFFF, size=NUM_KEYS, dtype=np.uint32)
+        else:
+            payloads = None
 
-    command_encoder = device.create_command_encoder()
+        test_name = f"test_{test_i}"
+        
+        sorter.request_sort_keys(test_name, keys, payloads)
+        
+        keys_sort_indices = np.argsort(keys, stable=True)
+        answer_dict[test_name] = [keys[keys_sort_indices]]
+        if DO_SORT_WITH_PAYLOAD:
+            answer_dict[test_name].append(payloads[keys_sort_indices])
 
     sorter.begin_frame(command_encoder)
     results = sorter.end_frame(command_encoder)
-    for key, result_buffer in results.items():
-        result_buffer = results.to_numpy().view(np.uint32)
-        print(result_buffer)
+
+    device.submit_command_buffer(command_encoder.finish())
+    device.wait_for_idle()
+
+    answer_results = ""
+    for test_name, result_buffer_gpus in results.items():
+        key_result_buffer_cpu = result_buffer_gpus[0].to_numpy().view(np.uint32)
+        key_answer_buffer = answer_dict[test_name][0]
+        answer_results += f'{test_name} Key Result: {np.array_equal(key_result_buffer_cpu, key_answer_buffer)}\n'
+        if DO_SORT_WITH_PAYLOAD:
+            payload_result_buffer_cpu = result_buffer_gpus[1].to_numpy().view(np.uint32)
+            payload_answer_buffer = answer_dict[test_name][1]
+            answer_results += f'{test_name} Payload Result: {np.array_equal(payload_result_buffer_cpu, payload_answer_buffer)}\n'
+    
+    del command_encoder
+    del sorter
+    del device
+    print(answer_results)
+    
 
     
