@@ -20,7 +20,7 @@ count_reduce_pass_kernel = device.create_compute_kernel(count_reduce_program)
 NUM_KEYS = (1 << 25) + 1337
 # NUM_KEYS = 32
 # NUM_KEYS = 512 * 512
-NUM_KEYS = 1024
+# NUM_KEYS = 1024
 
 config = Const.RadixDispatchConfig(NUM_KEYS)
 

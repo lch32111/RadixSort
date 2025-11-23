@@ -86,7 +86,7 @@ with command_encoder.begin_compute_pass() as pass_encoder:
 
     cursor["keys"] = keys_buffer
     cursor["sum_table"] = sum_table_buffer
-    cursor["reduce_table"] = wave_free_reduce_table_buffer
+    cursor["reduce_table"] = reduce_table_buffer
     pass_encoder.dispatch_compute([config.num_threadgroups_to_run, 1, 1])
 
     # NOTE(@chan): slangpy might track its resource usage for automatic barriers
@@ -105,7 +105,7 @@ with command_encoder.begin_compute_pass() as pass_encoder:
 
     cursor["keys"] = keys_buffer
     cursor["sum_table"] = sum_table_buffer
-    cursor["reduce_table"] = wave_free_reduce_table_buffer
+    cursor["reduce_table"] = reduce_table_buffer
     pass_encoder.dispatch_compute([config.num_reduce_threadgroups_to_run, 1, 1])
 
 with command_encoder.begin_compute_pass() as pass_encoder:
@@ -122,7 +122,7 @@ with command_encoder.begin_compute_pass() as pass_encoder:
 
     cursor["keys"] = keys_buffer
     cursor["sum_table"] = sum_table_buffer
-    cursor["reduce_table"] = reduce_table_buffer
+    cursor["reduce_table"] = wave_free_reduce_table_buffer
     pass_encoder.dispatch_compute([config.num_threadgroups_to_run, 1, 1])
 
     # NOTE(@chan): slangpy might track its resource usage for automatic barriers
@@ -141,7 +141,7 @@ with command_encoder.begin_compute_pass() as pass_encoder:
 
     cursor["keys"] = keys_buffer
     cursor["sum_table"] = sum_table_buffer
-    cursor["reduce_table"] = reduce_table_buffer
+    cursor["reduce_table"] = wave_free_reduce_table_buffer
     pass_encoder.dispatch_compute([config.num_reduce_threadgroups_to_run, 1, 1])
 
 if HAS_TIMEQUERY_FEATURE:

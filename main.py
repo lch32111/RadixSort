@@ -361,15 +361,19 @@ if __name__ == "__main__":
     np.random.seed(20251101)
     # np.random.seed(20251002)
 
-    DO_SORT_WITH_PAYLOAD = True,
+    DO_SORT_WITH_PAYLOAD = True
+    DO_SORT_WITH_WAVEFREE = True
     RADIXSORT_PAYLOAD_MACRO = "RADIXSORT_PAYLOAD" if DO_SORT_WITH_PAYLOAD else ""
+    RADIXSORT_WAVEFREE_MACRO = "RADIXSORT_WAVEFREE" if DO_SORT_WITH_WAVEFREE else ""
+
     device = spy.Device(
         enable_debug_layers=True,
         # enable_print=True,
         compiler_options={
             "include_paths": [HERE_DIR],
             "defines" : {
-                RADIXSORT_PAYLOAD_MACRO : "1"
+                RADIXSORT_PAYLOAD_MACRO : "1",
+                RADIXSORT_WAVEFREE_MACRO : "1",
             }
         },
     )
@@ -380,7 +384,8 @@ if __name__ == "__main__":
     TEST_COUNT = 10
     # NUM_KEYS = 32
     # NUM_KEYS = 1024 + 317
-    NUM_KEYS = 512 * 512
+    # NUM_KEYS = 512 * 512
+    NUM_KEYS = (1 << 20) + 1179
     # NUM_KEYS = (1 << 25) + 1337
 
     answer_dict = {}

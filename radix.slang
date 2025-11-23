@@ -192,8 +192,54 @@ void count_reduce_pass(uint local_id : SV_GroupThreadID, uint group_id : SV_Grou
 #endif
 }
 
+#ifdef RADIXSORT_WAVEFREE
+groupshared uint lds_sum_double[THREADGROUP_SIZE * 2];
+#endif
 uint block_scan_prefix(uint local_sum, uint local_id)
 {
+#ifdef RADIXSORT_WAVEFREE
+    uint offset = 1;
+
+    lds_sum_double[local_id] = local_sum;
+
+    for (uint d = THREADGROUP_SIZE / 2; d > 0; d >>= 1)
+    {
+        GroupMemoryBarrierWithGroupSync();
+
+        if (local_id < d)
+        {
+            uint ai = offset * (2 * local_id + 1) - 1;
+            uint bi = offset * (2 * local_id + 2) - 1;
+            lds_sum_double[bi] += lds_sum_double[ai];
+        }
+
+        offset <<= 1;
+    }
+
+    if (local_id == 0)
+        lds_sum_double[THREADGROUP_SIZE - 1] = 0;
+
+    for (uint d = 1; d < THREADGROUP_SIZE; d <<= 1)
+    {
+        offset >>= 1;
+
+        GroupMemoryBarrierWithGroupSync();
+
+        if (local_id < d)
+        {
+            uint ai = offset * (2 * local_id + 1) - 1;
+            uint bi = offset * (2 * local_id + 2) - 1;
+
+            uint t = lds_sum_double[ai];
+            lds_sum_double[ai] = lds_sum_double[bi];
+            lds_sum_double[bi] += t;
+        }
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    return lds_sum_double[local_id];
+#else
     // Do wave local scan-prefix
     uint wave_prefixed = WavePrefixSum(local_sum);
 
@@ -217,6 +263,7 @@ uint block_scan_prefix(uint local_sum, uint local_id)
     wave_prefixed += lds_sum[wave_id];
 
     return wave_prefixed;
+#endif
 }
 
 void scan_prefix(uint num_values_to_scan, uint local_id, uint group_id, uint bin_offset, uint base_index, bool add_partial_sum,
