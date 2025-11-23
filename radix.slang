@@ -142,6 +142,25 @@ void count_reduce_pass(uint local_id : SV_GroupThreadID, uint group_id : SV_Grou
         }
     }
 
+#ifdef RADIXSORT_WAVEFREE
+    lds_sum[local_id.x] = threadgroup_sum;
+    GroupMemoryBarrierWithGroupSync();
+
+    for (uint i = THREADGROUP_SIZE / 2; i > 0; i >>= 1)
+    {
+        if (local_id.x < i)
+        {
+            lds_sum[local_id.x] += lds_sum[local_id.x + i];
+        }
+
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    if (local_id.x == 0)
+    {
+        g_sort.sum_reduce_table[group_id.x] = lds_sum[0];
+    }
+#else
     // Reduce across the entirety of the thread group
     uint lane_count = WaveGetLaneCount();
     uint wave_reduced = WaveActiveSum(threadgroup_sum);
@@ -169,6 +188,8 @@ void count_reduce_pass(uint local_id : SV_GroupThreadID, uint group_id : SV_Grou
     // NOTE(@chan): as the first wave holds the threadgroup sums, we let the first thread write the sum
     if (local_id == 0)
         g_sort.sum_reduce_table[group_id] = wave_reduced;
+    
+#endif
 }
 
 uint block_scan_prefix(uint local_sum, uint local_id)
