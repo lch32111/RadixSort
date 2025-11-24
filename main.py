@@ -385,8 +385,8 @@ if __name__ == "__main__":
     # NUM_KEYS = 32
     # NUM_KEYS = 1024 + 317
     # NUM_KEYS = 512 * 512
-    NUM_KEYS = (1 << 20) + 1179
-    # NUM_KEYS = (1 << 25) + 1337
+    # NUM_KEYS = (1 << 23) + 1179
+    NUM_KEYS = (1 << 25) + 1337
 
     answer_dict = {}
     for test_i in range(TEST_COUNT):

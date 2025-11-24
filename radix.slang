@@ -553,7 +553,14 @@ void scatter_pass(uint local_id: SV_GroupThreadID, uint group_id: SV_GroupID)
             GroupMemoryBarrierWithGroupSync();
 
             // Prefix histogram
+#ifdef RADIXSORT_WAVEFREE
+            uint histogram_prefix_sum = block_scan_prefix(local_id < SORT_BIN_COUNT ? lds_bin_local_histogram[local_id] : 0, local_id);
+#else
+            // TODO(@chan): this code will not work when WaveGetLaneCount() < SORT_BIN_COUNT 
+            // as we just need a scan value from lds_bin_local_histogram[0 .. SORT_BIN_COUNT -1]
+            // Need to implement a custom scan prefix for this case.
             uint histogram_prefix_sum = WavePrefixSum(local_id < SORT_BIN_COUNT ? lds_bin_local_histogram[local_id] : 0);
+#endif
 
             // Broadcast prefix-sum via LDS
             if (local_id < SORT_BIN_COUNT)
