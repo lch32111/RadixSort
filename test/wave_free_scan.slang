@@ -3,6 +3,10 @@
 #define ELEMENTS_PER_THREAD 4
 #define THREADGROUP_SIZE 128
 
+#define NUM_BANKS 32 // modern hardware normally have 32 banks
+#define LOG_NUM_BANKS 5
+#define CONFLICT_FREE_OFFSET(n) ((n) >> LOG_NUM_BANKS)
+
 struct ScanPass
 {
     RWStructuredBuffer<uint> scan_src;
@@ -17,7 +21,7 @@ struct ScanPass
     uint config_num_scan_values;
 };
 
-groupshared uint lds_sum[THREADGROUP_SIZE];
+groupshared uint lds_sum[THREADGROUP_SIZE + (THREADGROUP_SIZE >> LOG_NUM_BANKS)];
 uint block_scan_prefix(uint local_sum, uint local_id)
 {
     // Do wave local scan-prefix
@@ -45,12 +49,11 @@ uint block_scan_prefix(uint local_sum, uint local_id)
     return wave_prefixed;
 }
 
-groupshared uint lds_sum_double[THREADGROUP_SIZE * 2];
 uint wave_free_block_scan_prefix(uint local_sum, uint local_id)
 {
     uint offset = 1;
 
-    lds_sum_double[local_id] = local_sum;
+    lds_sum[local_id + CONFLICT_FREE_OFFSET(local_id)] = local_sum;
 
     for (uint d = THREADGROUP_SIZE / 2; d > 0; d >>= 1)
     {
@@ -60,14 +63,16 @@ uint wave_free_block_scan_prefix(uint local_sum, uint local_id)
         {
             uint ai = offset * (2 * local_id + 1) - 1;
             uint bi = offset * (2 * local_id + 2) - 1;
-            lds_sum_double[bi] += lds_sum_double[ai];
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi);
+            lds_sum[bi] += lds_sum[ai];
         }
 
         offset <<= 1;
     }
 
     if (local_id == 0)
-        lds_sum_double[THREADGROUP_SIZE - 1] = 0;
+        lds_sum[THREADGROUP_SIZE - 1 + CONFLICT_FREE_OFFSET(THREADGROUP_SIZE - 1)] = 0;
 
     for (uint d = 1; d < THREADGROUP_SIZE; d <<= 1)
     {
@@ -80,15 +85,18 @@ uint wave_free_block_scan_prefix(uint local_sum, uint local_id)
             uint ai = offset * (2 * local_id + 1) - 1;
             uint bi = offset * (2 * local_id + 2) - 1;
 
-            uint t = lds_sum_double[ai];
-            lds_sum_double[ai] = lds_sum_double[bi];
-            lds_sum_double[bi] += t;
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi);
+
+            uint t = lds_sum[ai];
+            lds_sum[ai] = lds_sum[bi];
+            lds_sum[bi] += t;
         }
     }
 
     GroupMemoryBarrierWithGroupSync();
 
-    return lds_sum_double[local_id];
+    return lds_sum[local_id + CONFLICT_FREE_OFFSET(local_id)];
 }
 
 ParameterBlock<ScanPass> pass;

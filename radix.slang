@@ -3,6 +3,12 @@
 #define ELEMENTS_PER_THREAD 4u
 #define THREADGROUP_SIZE 128u
 
+#ifdef RADIXSORT_WAVEFREE
+#   define NUM_BANKS 32 // modern hardware normally have 32 banks
+#   define LOG_NUM_BANKS 5
+#   define CONFLICT_FREE_OFFSET(n) ((n) >> LOG_NUM_BANKS)
+#endif
+
 struct RadixSortConfig
 {
     uint num_keys;
@@ -33,7 +39,11 @@ struct RadixSort
 ParameterBlock<RadixSort> g_sort;
 
 groupshared uint lds_histogram[THREADGROUP_SIZE * SORT_BIN_COUNT];
+#ifdef RADIXSORT_WAVEFREE
+groupshared uint lds_sum[THREADGROUP_SIZE + (THREADGROUP_SIZE >> LOG_NUM_BANKS)];
+#else
 groupshared uint lds_sum[THREADGROUP_SIZE];
+#endif
 groupshared uint lds_prefix[ELEMENTS_PER_THREAD][THREADGROUP_SIZE];
 
 groupshared uint lds_bin_offset_cache[THREADGROUP_SIZE];
@@ -192,15 +202,12 @@ void count_reduce_pass(uint local_id : SV_GroupThreadID, uint group_id : SV_Grou
 #endif
 }
 
-#ifdef RADIXSORT_WAVEFREE
-groupshared uint lds_sum_double[THREADGROUP_SIZE * 2];
-#endif
 uint block_scan_prefix(uint local_sum, uint local_id)
 {
 #ifdef RADIXSORT_WAVEFREE
     uint offset = 1;
 
-    lds_sum_double[local_id] = local_sum;
+    lds_sum[local_id + CONFLICT_FREE_OFFSET(local_id)] = local_sum;
 
     for (uint d = THREADGROUP_SIZE / 2; d > 0; d >>= 1)
     {
@@ -210,14 +217,16 @@ uint block_scan_prefix(uint local_sum, uint local_id)
         {
             uint ai = offset * (2 * local_id + 1) - 1;
             uint bi = offset * (2 * local_id + 2) - 1;
-            lds_sum_double[bi] += lds_sum_double[ai];
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi);
+            lds_sum[bi] += lds_sum[ai];
         }
 
         offset <<= 1;
     }
 
     if (local_id == 0)
-        lds_sum_double[THREADGROUP_SIZE - 1] = 0;
+        lds_sum[THREADGROUP_SIZE - 1 + CONFLICT_FREE_OFFSET(THREADGROUP_SIZE - 1)] = 0;
 
     for (uint d = 1; d < THREADGROUP_SIZE; d <<= 1)
     {
@@ -229,16 +238,19 @@ uint block_scan_prefix(uint local_sum, uint local_id)
         {
             uint ai = offset * (2 * local_id + 1) - 1;
             uint bi = offset * (2 * local_id + 2) - 1;
+            
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi);
 
-            uint t = lds_sum_double[ai];
-            lds_sum_double[ai] = lds_sum_double[bi];
-            lds_sum_double[bi] += t;
+            uint t = lds_sum[ai];
+            lds_sum[ai] = lds_sum[bi];
+            lds_sum[bi] += t;
         }
     }
 
     GroupMemoryBarrierWithGroupSync();
 
-    return lds_sum_double[local_id];
+    return lds_sum[local_id + CONFLICT_FREE_OFFSET(local_id)];
 #else
     // Do wave local scan-prefix
     uint wave_prefixed = WavePrefixSum(local_sum);
